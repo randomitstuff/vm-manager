@@ -1,0 +1,371 @@
+#!/bin/bash
+#set -x
+
+# -----------------------------------------------------------------------------
+# Script name: 
+# Script location: 
+# Script OS alias: none
+# Description: 
+# Author: Adrian Cortinas
+# Last Modification Date: 
+# Version: 
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# functions
+# -----------------------------------------------------------------------------
+f_add() {
+    f_validate
+    if [ -d $set_dir ];
+    then
+        cd $set_dir
+        if [ -d ${set_os}_template ];
+        then 
+                cp -pr ${set_os}_template $set_name
+                cd $set_name
+                sed -i -e 's/HOSTNAME/'${set_name}'/' Vagrantfile
+                vagrant up
+                vagrant ssh -c "ifconfig eth1"  | grep -w inet | awk '{ print "Remote IP: " $2 }'
+        fi
+    fi
+}
+
+f_start () {
+    f_validate
+    if [ -d $set_dir ];
+    then
+        cd $set_dir
+        if [ -d $set_name ];
+        then 
+                cd $set_name
+                vagrant up
+                vagrant ssh -c "ifconfig eth1"  | grep -w inet | awk '{ print "Remote IP: " $2 }'
+        fi
+    fi
+}
+
+f_halt () {
+    f_validate
+    if [ -d $set_dir ];
+    then
+        cd $set_dir
+        if [ -d $set_name ];
+        then
+                cd $set_name
+                vagrant halt
+        fi
+    fi
+}
+
+f_remove () {
+    f_validate
+    if [ -d $set_dir ];
+    then
+        cd $set_dir
+        if [ -d $set_name ];
+        then
+                cd $set_name
+                vagrant destroy -f 
+                cd ..
+                rm -rf $set_name
+        fi
+    fi
+}
+
+f_status () {
+    f_validate
+    if [ -d $set_dir ];
+    then
+        cd $set_dir
+        if [ -d $set_name ];
+        then 
+                cd $set_name
+                vagrant status
+                vagrant ssh -c "ifconfig eth1"  | grep -w inet | awk '{ print "Remote IP: " $2 }'
+        fi
+    fi
+}
+
+f_suspend () {
+    f_validate
+    if [ -d $set_dir ];
+    then
+        cd $set_dir
+        if [ -d $set_name ];
+        then 
+                cd $set_name
+                vagrant suspend
+        fi
+    fi
+}
+
+f_resume () {
+    f_validate
+    if [ -d $set_dir ];
+    then
+        cd $set_dir
+        if [ -d $set_name ];
+        then 
+                cd $set_name
+                vagrant resume
+        fi
+    fi
+}
+
+f_provision () {
+    f_validate
+    if [ -d $set_dir ];
+    then
+        cd $set_dir
+        if [ -d $set_name ];
+        then
+                cd $set_name
+                vagrant provision
+        fi
+    fi
+}
+
+f_modify () {
+    f_validate
+    if [ -d $set_dir ];
+    then
+        cd $set_dir
+        if [ -d $set_name ];
+        then
+                cd $set_name
+                vagrant halt
+                read set_cmd set_val <<< $(echo $set_mod | awk -F ":" '{print $1" "$2}')
+                case $set_cmd
+                 in
+                   "add_disk" )
+                             vb_name=`VBoxManage list vms | grep -w $set_name | awk -F" " '{print $1}' | tr -d '"'`
+                             cd $VB_HOME/$vb_name
+                             num_disk=`ls -1 *.vmdk  | wc -l` 
+                             next_disk="disk`expr $num_disk + 1`"
+                             next_port=`expr $num_disk + 1`
+                             VBoxManage createmedium --filename $VB_HOME/$vb_name/$next_disk.vmdk --size $set_val --format vmdk
+                             VBoxManage storageattach $vb_name --storagectl "SATA Controller" --medium $VB_HOME/$vb_name/$next_disk.vmdk --port $next_port --type hdd
+                             cd -
+                             ;;
+                   "resize_mem" )
+                             is_comment=`grep vb.memory Vagrantfile  | grep -c "#"`
+                             if [ $is_comment -gt 0 ]
+                             then
+                                echo ">>> You need to uncomment the config.vm.provider block for this to take effect <<<\n"
+                             fi
+                                sed -i -e 's/vb.memory = "'[0-9]*'"/vb.memory = "'${set_val}'"/' Vagrantfile 
+                             ;;
+                   "hostiocache")
+                             vb_name=`VBoxManage list vms | grep -w $set_name | awk -F" " '{print $1}' | tr -d '"'`
+                             VBoxManage storagectl $vb_name --name "SATA Controller" --controller IntelAHCI --hostiocache $set_val
+                             ;;
+                   "add_cpu")
+                             vb_name=`VBoxManage list vms | grep -w $set_name | awk -F" " '{print $1}' | tr -d '"'`
+                             VBoxManage modifyvm $vb_name --cpus $set_val --ioapic on
+                             ;;
+                            * )
+                               echo "ERROR: Missing or Wrong Modify Option \n"
+                               f_usage
+                             ;;
+                esac 
+               #vagrant up
+        fi
+    fi
+}
+
+f_restart () {
+    f_validate
+    f_halt
+    f_start
+}
+
+f_validate () {
+    if [[ $set_name == "null" && ${ctl_flag_name:-0} == 0 ]]
+    then
+       f_usage
+    else
+      if [[ $set_name == "null" && ${ctl_flag_name:-0} == 1 ]]
+        then
+            echo "ERROR: Invalid VM name, you cannot use null"
+            exit 2
+        fi
+    fi
+
+    if [[ ( $set_cmd == "new" || $set_cmd == "add" ) && ${ctl_flag_os:-0} == 0 ]]
+    then 
+       echo " ********************** "
+       echo "    Missing OS Type"
+       echo " ********************** "
+       f_usage
+    fi
+}
+
+f_usage(){
+    echo " "
+    echo "USAGE: `basename $0` [ -d path_to_containers ] -n vm_name -c command  "
+    echo " "
+    echo " -d path_to_containers      - [$containers_dir] Vagrant Configuration File Dir Path"
+    echo " -n vm_name             - Virtual Machine Name" 
+    echo " -o os_name             - Valid os': ol73 ol75 ol76 centos511 centos73 centos75 ubuntu-17.10"
+    echo " -c command             - Control commands: "
+    echo "   start       - Bring VM Up"
+    echo "   halt        - Shutdown VM"
+    echo "   restart     - Restart VM (Shutdown & Start)"
+    echo "   add         - Instantiate a new VM"
+    echo "   remove      - Destroy a VM (deallocate all resources)"
+    echo "   suspend     - Pause & Save VM state"
+    echo "   resume      - Resume VM"
+    echo "   status      - Get VM Running Status"
+    echo "   list_vms    - List All VMs"
+    echo "   running     - List ALL Running VMs"
+    echo "   provision   - Run provisioning script"
+    echo "   modify      - Modify VM Settings"
+    echo " -m command             - Modify VM Settings Commands:"
+    echo "   add_disk:size         - Add new disk (size in MB)"
+    echo "   resize_mem:size       - Resize Memory (size in MB)"
+    echo "   hostiocache:[on|off]  - Change Host IO Cache"
+    echo "   add_cpu:number        - Add or Remove CPUs"
+    echo " "
+    exit 1
+}
+# -----------------------------------------------------------------------------
+# Main Program
+# -----------------------------------------------------------------------------
+
+set_dir="null"
+set_cmd="status"
+set_name="null"
+VB_HOME=/111/VirtualBoxVMs
+containers_dir=/111/containers
+
+set -- `getopt n:c:d:o:m: $*`
+
+if [ $? != 0 ]
+then
+    f_usage
+    exit
+fi
+
+
+# Set flags
+while [ $1 != -- ]
+do
+    case $1
+    in
+        -n) # vm name
+            if [[  $(echo $2| awk '/^-/ {print 1}' ) == 1  ]]
+            then
+                echo "ERROR: Invalid VM Name"
+                echo "\tName cannot start with a dash (-)\n"
+                exit
+            else
+                ctl_flag_name=1
+                set_name=$(echo $2 | tr "[:upper:]" "[:lower:]")
+                shift
+            fi
+            ;;
+        -c) # command
+            if [[  $(echo $2| awk '/^-/ {print 1}' ) == 1  ]]
+            then
+                echo "ERROR: Invalid command name\n"
+                echo "\Commands cannot start with a dash (-)\n"
+                exit
+            else 
+                ctl_flag_cmd=1
+                set_cmd=$2
+                shift
+            fi
+            ;;
+        -o) # os name
+            if [[  $(echo $2| awk '/^-/ {print 1}' ) == 1  ]]
+            then
+                echo "ERROR: Invalid operating system name\n"
+                echo "\t OS cannot start with a dash(-)\n"
+                exit
+            else
+                ctl_flag_os=1
+                set_os=$2
+                shift
+            fi
+            ;;
+        -d) # containers dir
+            if [[  $(echo $2| awk '/^-/ {print 1}' ) == 1  ]]
+            then
+                echo "ERROR: Invalid directory name\n"
+                echo "\t Directories cannot start with a dash(-)\n"
+                exit
+            else 
+                ctl_flag_dir=1
+                set_dir=$2
+                shift
+            fi
+            ;;
+        -m) # modify vm
+            if [[  $(echo $2| awk '/^-/ {print 1}' ) == 1  ]]
+            then
+                echo "ERROR: Invalid modify command $2 \n"
+                echo "\t Command cannot start with a dash(-)\n"
+                exit
+            else
+                ctl_flag_mod=1
+                set_mod=$2
+                shift
+            fi
+            ;;
+        *) 
+            echo "ERROR: Invalid Option $1\n"
+            echo "\This parameter is not supported\n"
+    esac
+    shift
+done
+
+if [[ $set_dir == "null" && ${ctl_flag_dir:-0} == 0 ]]
+then
+    set_dir=$containers_dir
+fi
+
+case $set_cmd in
+    "start") 
+            f_start
+            ;;
+    "status") 
+            f_status
+            ;;
+    "add" | "new" ) 
+            f_add
+            ;;
+    "remove" | "destroy" | "delete" ) 
+            f_remove
+            ;;            
+    "stop" | "halt" ) 
+            f_halt
+            ;;
+    "suspend") 
+            f_suspend
+            ;;
+    "resume" | "continue" ) 
+            f_resume
+            ;;
+    "restart") 
+            f_restart
+            ;;
+    "provision") 
+            f_provision
+            ;;
+    "list_vms" | "vms" | "all" ) 
+            vboxmanage list vms
+            ;;
+    "running" | "list_running" ) 
+            vboxmanage list runningvms
+            ;;
+    "modify" | "update") 
+            f_modify
+            ;;
+    *)
+            echo "ERROR: Invalid command"
+            f_usage
+            exit 1
+            ;;
+esac
+
+

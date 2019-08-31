@@ -1,0 +1,12 @@
+new_vm=$1
+containers_dir=/v01/containers
+
+if [ -d $containers_dir ];
+then
+        cd $containers_dir
+        if [ -d $new_vm ];
+        then
+                cd $new_vm
+                vagrant ssh
+        fi
+fi
